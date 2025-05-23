@@ -3420,6 +3420,16 @@ static sqlite3_module vec_npy_eachModule = {
   "vectors BLOB NOT NULL"                                                      \
   ");"
 
+/// 1) schema, 2) original vtab table name
+#define VEC0_DISKANN_INDEX_NAME "\"%w\".\"%w_diskann_index\""
+
+/// 1) schema, 2) original vtab table name
+#define VEC0_DISKANN_INDEX_CREATE                                            \
+  "CREATE TABLE " VEC0_DISKANN_INDEX_NAME "("                                \
+  "rowid PRIMARY KEY,"                                                         \
+  "data BLOB NOT NULL"                                                      \
+  ");"
+
 #define VEC0_SHADOW_AUXILIARY_NAME "\"%w\".\"%w_auxiliary\""
 
 #define VEC0_SHADOW_METADATA_N_NAME "\"%w\".\"%w_metadatachunks%02d\""
@@ -5153,6 +5163,23 @@ static int vec0_init(sqlite3 *db, void *pAux, int argc, const char *const *argv,
       }
       sqlite3_finalize(stmt);
     }
+    
+    char *zCreateDiskAnnIndexShadow = sqlite3_mprintf(VEC0_DISKANN_INDEX_CREATE, pNew->schemaName, pNew->tableName);
+    if(!zCreateDiskAnnIndexShadow) {
+      goto error;
+    }
+    rc = sqlite3_prepare_v2(db, zCreateDiskAnnIndexShadow, -1, &stmt, NULL);
+
+    sqlite3_free((void *) zCreateDiskAnnIndexShadow);
+    if ((rc != SQLITE_OK) || (sqlite3_step(stmt) != SQLITE_DONE)) {
+      // TODO(IMP)
+      sqlite3_finalize(stmt);
+      *pzErr = sqlite3_mprintf("Could not create '_diskann_index' shadow table: %s",
+                               sqlite3_errmsg(db));
+      goto error;
+    }
+    sqlite3_finalize(stmt);
+
   }
 
   *ppVtab = (sqlite3_vtab *)pNew;
