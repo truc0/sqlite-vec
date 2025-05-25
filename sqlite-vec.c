@@ -3392,7 +3392,6 @@ static sqlite3_module vec_npy_eachModule = {
   "data BLOB NOT NULL"                                                         \
   ");".
 
-
 #define VECTOR_SEARCH_L 200
 
 typedef struct DiskAnnSearchCtx DiskAnnSearchCtx;
@@ -3549,6 +3548,46 @@ static void diskAnnSearchCtxDeinit(DiskAnnSearchCtx *pCtx) {
   sqlite3_free(pCtx->aTopDistances);
 }
 
+int diskAnnSelectRandomRow(vec0_vtab *p, u64 *pRowid) {
+  int rc;
+  sqlite3_stmt *pStmt = NULL;
+  char *zSql = NULL;
+
+  zSql =
+      sqlite3_mprintf("SELECT rowid FROM" VEC0_DISKANN_INDEX_NAME
+                      "LIMIT 1 OFFSET ABS(RANDOM()) %% MAX((SELECT COUNT(*)"
+                      "FROM" VEC0_DISKANN_INDEX_NAME "), 1)",
+                      p->schemaName, p->tableName, p->schemaName, p->tableName);
+  if (zSql == NULL) {
+    rc = SQLITE_NOMEM;
+    goto out;
+  }
+  rc = sqlite3_prepare_v2(p->db, zSql, -1, &pStmt, 0);
+  if (rc != SQLITE_OK) {
+    goto out;
+  }
+  rc = sqlite3_step(pStmt);
+  if (rc != SQLITE_ROW) {
+    goto out;
+  }
+
+  assert(sqlite3_column_type(pStmt, 0) == SQLITE_INTEGER);
+  *pRowid = sqlite3_column_int64(pStmt, 0);
+
+  // check that we has only single row matching the criteria (otherwise - this
+  // is a bug)
+  assert(sqlite3_step(pStmt) == SQLITE_DONE);
+  rc = SQLITE_OK;
+out:
+  if (pStmt != NULL) {
+    sqlite3_finalize(pStmt);
+  }
+  if (zSql != NULL) {
+    sqlite3DbFree(p->db, zSql);
+  }
+  return rc;
+}
+
 int diskAnnSearchInternal(vec0_vtab *p,           // the vec0 vtab
                           DiskAnnSearchCtx *pCtx, // the search context
                           u64 nStartRowid         // the row id of entry vector
@@ -3598,6 +3637,8 @@ int diskAnnSearch(vec0_vtab *p, struct VectorColumnDefinition *vector_column,
   u64 nStartRowid;
 
   diskAnnSearchCtxInit(&ctx, VECTOR_SEARCH_L, k);
+
+  rc = diskAnnSelectRandomRow(p, &nStartRowid);
 
 cleanup:
   diskAnnSearchCtxDeinit(&ctx);
