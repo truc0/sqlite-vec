@@ -3390,15 +3390,220 @@ static sqlite3_module vec_npy_eachModule = {
   "CREATE TABLE " VEC0_DISKANN_INDEX_NAME "("                                  \
   "rowid PRIMARY KEY,"                                                         \
   "data BLOB NOT NULL"                                                         \
-  ");"
+  ");".
 
-int diskann_insert() {}
 
-int diskann_update() {}
+#define VECTOR_SEARCH_L 200
 
-int diskann_delete() {}
+typedef struct DiskAnnSearchCtx DiskAnnSearchCtx;
+typedef struct DiskAnnNode DiskAnnNode;
+typedef struct BlobSpot BlobSpot;
 
-int diskann_search() {}
+struct BlobSpot {
+  u64 nRowid;          /* last rowid for which open/reopen was called */
+  sqlite3_blob *pBlob; /* BLOB handle */
+  u8 *pBuffer;         /* buffer for BLOB data */
+  int nBufferSize;     /* buffer size */
+  u8 isWritable;       /* blob open mode (readonly or read/write) */
+};
+
+int blobSpotCreate(vec0_vtab *p, BlobSpot **ppBlobSpot, u64 nRowid,
+                   int nBufferSize, int isWritable) {
+  BlobSpot *pBlobSpot = sqlite3_malloc(sizeof(BlobSpot));
+  if (pBlobSpot == NULL) {
+    return SQLITE_NOMEM;
+  }
+  pBlobSpot->nRowid = nRowid;
+  pBlobSpot->pBlob = NULL;
+  pBlobSpot->pBuffer = NULL;
+  pBlobSpot->nBufferSize = nBufferSize;
+
+  int rc = sqlite3_blob_open(p->db, p->schemaName, VEC0_DISKANN_INDEX_NAME,
+                             "data", nRowid, isWritable, &pBlobSpot->pBlob);
+  if (rc != SQLITE_OK) {
+    sqlite3_free(pBlobSpot);
+    return rc;
+  }
+
+  pBlobSpot->pBuffer = sqlite3_malloc(nBufferSize);
+  if (pBlobSpot->pBuffer == NULL) {
+    sqlite3_blob_close(pBlobSpot->pBlob);
+    sqlite3_free(pBlobSpot);
+    return SQLITE_NOMEM;
+  }
+
+  return SQLITE_OK;
+}
+
+int blobSpotFlush(BlobSpot *pBlobSpot) {
+  int rc = sqlite3_blob_write(pBlobSpot->pBlob, pBlobSpot->pBuffer,
+                              pBlobSpot->nBufferSize, 0);
+  if (rc != SQLITE_OK) {
+    return rc;
+  }
+  return rc;
+}
+
+void blobSpotFree(BlobSpot *pBlobSpot) {
+  if (pBlobSpot->pBlob != NULL) {
+    sqlite3_blob_close(pBlobSpot->pBlob);
+  }
+  if (pBlobSpot->pBuffer != NULL) {
+    sqlite3_free(pBlobSpot->pBuffer);
+  }
+  sqlite3_free(pBlobSpot);
+}
+
+struct DiskAnnNode {
+  u64 nRowid;          /* node id */
+  int visited;         /* is this node visited? */
+  DiskAnnNode *pNext;  /* next node in the visited list */
+  BlobSpot *pBlobSpot; /* BLOB handle for the vector data */
+};
+
+static DiskAnnNode *diskAnnNodeAlloc(u64 nRowid) {
+  DiskAnnNode *pNode = sqlite3_malloc(sizeof(DiskAnnNode));
+  if (pNode == NULL) {
+    return NULL;
+  }
+  pNode->nRowid = nRowid;
+  pNode->visited = 0;
+  pNode->pNext = NULL;
+  pNode->pBlobSpot = NULL;
+  return pNode;
+}
+
+static void diskAnnNodeFree(DiskAnnNode *pNode) {
+  if (pNode->pBlobSpot != NULL) {
+    blobSpotFree(pNode->pBlobSpot);
+  }
+  sqlite3_free(pNode);
+}
+
+struct DiskAnnSearchCtx {
+  void *queryVector;            // the query vector to search for
+  DiskAnnNode **aCandidates;    // array of unvisited candidates
+  float *aDistances;            // array of distances  to the query vector
+  unsigned int nCandidates;     // current size of aCandidates/aDistances arrays
+  unsigned int maxCandidates;   // max size of aCandidates/aDistances arrays
+  DiskAnnNode **aTopCandidates; // top candidates with exact distance calculated
+  float *aTopDistances;         // top candidates exact distances
+  int nTopCandidates;           // current size of aTopCandidates/aTopDistances
+  int maxTopCandidates;         // max size of aTopCandidates/aTopDistances
+  DiskAnnNode *visitedList;     // list of all visited candidates
+  unsigned int nUnvisited;      // amount of unvisited candidates in aCandidates
+};
+
+static int diskAnnSearchCtxInit(DiskAnnSearchCtx *pCtx, int maxCandidates,
+                                int topCandidates) {
+  pCtx->aDistances = sqlite3_malloc(maxCandidates * sizeof(double));
+  pCtx->aCandidates = sqlite3_malloc(maxCandidates * sizeof(DiskAnnNode *));
+  pCtx->nCandidates = 0;
+  pCtx->maxCandidates = maxCandidates;
+  pCtx->aTopDistances = sqlite3_malloc(topCandidates * sizeof(double));
+  pCtx->aTopCandidates = sqlite3_malloc(topCandidates * sizeof(DiskAnnNode *));
+  pCtx->nTopCandidates = 0;
+  pCtx->maxTopCandidates = topCandidates;
+  pCtx->visitedList = NULL;
+  pCtx->nUnvisited = 0;
+
+  if (pCtx->aDistances != NULL && pCtx->aCandidates != NULL &&
+      pCtx->aTopDistances != NULL && pCtx->aTopCandidates != NULL) {
+    return SQLITE_OK;
+  }
+  if (pCtx->aDistances != NULL) {
+    sqlite3_free(pCtx->aDistances);
+  }
+  if (pCtx->aCandidates != NULL) {
+    sqlite3_free(pCtx->aCandidates);
+  }
+  if (pCtx->aTopDistances != NULL) {
+    sqlite3_free(pCtx->aTopDistances);
+  }
+  if (pCtx->aTopCandidates != NULL) {
+    sqlite3_free(pCtx->aTopCandidates);
+  }
+
+  return SQLITE_NOMEM;
+}
+
+static void diskAnnSearchCtxDeinit(DiskAnnSearchCtx *pCtx) {
+  int i;
+  DiskAnnNode *pNode, *pNext;
+
+  for (i = 0; i < pCtx->nCandidates; i++) {
+    if (!pCtx->aCandidates[i]->visited) {
+      diskAnnNodeFree(pCtx->aCandidates[i]);
+    }
+  }
+
+  pNode = pCtx->visitedList;
+  while (pNode != NULL) {
+    pNext = pNode->pNext;
+    diskAnnNodeFree(pNode);
+    pNode = pNext;
+  }
+  sqlite3_free(pCtx->aCandidates);
+  sqlite3_free(pCtx->aDistances);
+  sqlite3_free(pCtx->aTopCandidates);
+  sqlite3_free(pCtx->aTopDistances);
+}
+
+int diskAnnSearchInternal(vec0_vtab *p,           // the vec0 vtab
+                          DiskAnnSearchCtx *pCtx, // the search context
+                          u64 nStartRowid         // the row id of entry vector
+) {}
+
+int diskAnnInsert() {}
+
+int diskAnnUpdate() {}
+
+int diskAnnDelete() {}
+
+/**
+ * @brief Search for k nearest neighbors in a disk-based ANN index
+ *
+ * @param p The vec0 virtual table
+ * @param vector_column The target vector column definition
+ * @param vectorColumnIdx The index of the vector column in the vtab
+ * @param arrayRowidsIn Row ids to filter results by (optional)
+ * @param aMetadataIn Metadata to filter results by (optional)
+ * @param idxStr The index string
+ * @param argc Argument count for index
+ * @param argv Argument values for index
+ * @param queryVector The query vector to find neighbors for
+ * @param k Number of nearest neighbors to return
+ * @param out_topk_rowids Output array of row ids for top k neighbors
+ * @param out_topk_distances Output array of distances for top k neighbors
+ * @param out_used Output number of neighbors found
+ * @return SQLITE_OK on success, error code otherwise
+ */
+int diskAnnSearch(vec0_vtab *p, struct VectorColumnDefinition *vector_column,
+                  int vectorColumnIdx, struct Array *arrayRowidsIn,
+                  struct Array *aMetadataIn, const char *idxStr, int argc,
+                  sqlite3_value **argv, void *queryVector, i64 k,
+                  i64 **out_topk_rowids, f32 **out_topk_distances,
+                  i64 *out_used) {
+  // ignore the index
+  UNUSED_PARAMETER(idxStr);
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(argv);
+
+  // ignore the filter
+  UNUSED_PARAMETER(arrayRowidsIn);
+  UNUSED_PARAMETER(aMetadataIn);
+
+  int rc = SQLITE_OK;
+  DiskAnnSearchCtx ctx;
+  u64 nStartRowid;
+
+  diskAnnSearchCtxInit(&ctx, VECTOR_SEARCH_L, k);
+
+cleanup:
+  diskAnnSearchCtxDeinit(&ctx);
+
+  return rc;
+}
 
 #pragma endregion
 
