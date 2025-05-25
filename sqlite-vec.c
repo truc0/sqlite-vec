@@ -3380,6 +3380,28 @@ static sqlite3_module vec_npy_eachModule = {
 
 #pragma endregion
 
+#pragma region diskann
+
+/// 1) schema, 2) original vtab table name
+#define VEC0_DISKANN_INDEX_NAME "\"%w\".\"%w_diskann_index\""
+
+/// 1) schema, 2) original vtab table name
+#define VEC0_DISKANN_INDEX_CREATE                                              \
+  "CREATE TABLE " VEC0_DISKANN_INDEX_NAME "("                                  \
+  "rowid PRIMARY KEY,"                                                         \
+  "data BLOB NOT NULL"                                                         \
+  ");"
+
+int diskann_insert() {}
+
+int diskann_update() {}
+
+int diskann_delete() {}
+
+int diskann_search() {}
+
+#pragma endregion
+
 #pragma region vec0 virtual table
 
 #define VEC0_COLUMN_ID 0
@@ -3428,16 +3450,6 @@ static sqlite3_module vec_npy_eachModule = {
   "CREATE TABLE " VEC0_SHADOW_VECTOR_N_NAME "("                                \
   "rowid PRIMARY KEY,"                                                         \
   "vectors BLOB NOT NULL"                                                      \
-  ");"
-
-/// 1) schema, 2) original vtab table name
-#define VEC0_DISKANN_INDEX_NAME "\"%w\".\"%w_diskann_index\""
-
-/// 1) schema, 2) original vtab table name
-#define VEC0_DISKANN_INDEX_CREATE                                              \
-  "CREATE TABLE " VEC0_DISKANN_INDEX_NAME "("                                  \
-  "rowid PRIMARY KEY,"                                                         \
-  "data BLOB NOT NULL"                                                         \
   ");"
 
 #define VEC0_SHADOW_AUXILIARY_NAME "\"%w\".\"%w_auxiliary\""
