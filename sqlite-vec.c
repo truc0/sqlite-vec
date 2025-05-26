@@ -5414,7 +5414,7 @@ int diskAnnSelectRandomShadowRow(DiskAnnIndex *pIndex, u64 *pRowid) {
   zSql = sqlite3_mprintf(
       "SELECT rowid FROM \"%w\".%s LIMIT 1 OFFSET ABS(RANDOM()) %% MAX((SELECT "
       "COUNT(*) FROM \"%w\".%s), 1)",
-      pIndex->zDbSName, pIndex->zName, pIndex->zDbSName, pIndex->zName);
+      pIndex->zDbSName, pIndex->zShadow, pIndex->zDbSName, pIndex->zShadow);
   if (zSql == NULL) {
     rc = SQLITE_NOMEM;
     goto out;
