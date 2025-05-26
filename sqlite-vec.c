@@ -5557,7 +5557,7 @@ int diskAnnSearch(vec0_vtab *pVtab, DiskAnnIndex *pIndex, const Vector *pVector,
     return rc;
   }
 
-  printf("nStartRowid: %ld\n", nStartRowid);
+  // printf("nStartRowid: %ld\n", nStartRowid);
 
   rc = diskAnnSearchCtxInit(&ctx, pVector, pIndex->searchL, k,
                             DISKANN_BLOB_READONLY);
