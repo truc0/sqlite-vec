@@ -3011,7 +3011,7 @@ int parse_npy_file(sqlite3_vtab *pVTab, FILE *file, vec_npy_each_cursor *pCur) {
 
   pCur->maxChunks = 1024;
   pCur->chunksBufferSize =
-      (vector_byte_size(element_type, numDimensions)) * pCur->maxChunks;
+      (vector_byte_size(element_type, numDimensions))*pCur->maxChunks;
   pCur->chunksBuffer = sqlite3_malloc(pCur->chunksBufferSize);
   if (pCur->chunksBufferSize && !pCur->chunksBuffer) {
     return SQLITE_NOMEM;
@@ -5504,7 +5504,52 @@ out:
   return SQLITE_OK;
 }
 
-int diskAnnInsert() {}
+/**
+ * @brief Insert a single vector into the DiskANN index
+ *
+ * @param p The vec0 virtual table
+ * @param nRowid The row ID to associate with the vector
+ * @param pVector Pointer to the vector data to insert
+ * @param nVectorSize The size of the vector type (384 for float[384])
+ * @return SQLITE_OK on success, error code otherwise
+ */
+int diskAnnInsert(vec0_vtab *p, u64 nRowid, void *pVector, int nVectorSize) {
+  int rc = SQLITE_OK;
+
+  // I1: insert the original vector into the diskann index
+  sqlite3_stmt *pStmt = NULL;
+  sqlite3_str *s = sqlite3_str_new(NULL);
+  sqlite3_str_appendf(
+      s, "INSERT INTO " VEC0_DISKANN_INDEX_NAME " (rowid, data) VALUES (?, ?)",
+      p->schemaName, p->tableName);
+  char *zSql = sqlite3_str_finish(s);
+  if (zSql == NULL) {
+    rc = SQLITE_NOMEM;
+    goto cleanup;
+  }
+  rc = sqlite3_prepare_v2(p->db, zSql, -1, &pStmt, NULL);
+  if (rc != SQLITE_OK) {
+    goto cleanup;
+  }
+  sqlite3_bind_int64(pStmt, 1, nRowid);
+  sqlite3_bind_blob(pStmt, 2, pVector, nVectorSize, SQLITE_TRANSIENT);
+
+  rc = sqlite3_step(pStmt);
+  if (rc != SQLITE_DONE) {
+    sqlite3_finalize(pStmt);
+    rc = SQLITE_ERROR;
+    goto cleanup;
+  }
+  sqlite3_finalize(pStmt);
+
+  return SQLITE_OK;
+
+cleanup:
+  if (zSql != NULL) {
+    sqlite3_free(zSql);
+  }
+  return rc;
+}
 
 int diskAnnUpdate() {}
 
@@ -9388,6 +9433,20 @@ int vec0Update_Insert(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
                                        vectorDatas, blobChunksValidity,
                                        bufferChunksValidity);
   if (rc != SQLITE_OK) {
+    goto cleanup;
+  }
+
+  if (numReadVectors > 0) {
+    rc = diskAnnInsert(p, rowid, vectorDatas[0],
+                       p->vector_columns[0].dimensions);
+    if (rc != SQLITE_OK) {
+      goto cleanup;
+    }
+  }
+  // REMARK(truc0): currently diskann supports one vector column only
+  if (numReadVectors > 1) {
+    vtab_set_error(pVTab, "DiskANN currently supports one vector column only");
+    rc = SQLITE_ERROR;
     goto cleanup;
   }
 
