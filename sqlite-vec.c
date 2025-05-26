@@ -5910,7 +5910,8 @@ int diskAnnInsert(vec0_vtab *p, DiskAnnIndex *pIndex, Vector *pVector,
 
   rc = SQLITE_OK;
 out:
-  // deinitVectorPair(&vCandidate);
+  sqlite3_free(vInsert.data);
+  sqlite3_free(vCandidate.data);
   if (rc == SQLITE_OK) {
     rc = blobSpotFlush(pIndex, pBlobSpot);
     if (rc != SQLITE_OK) {
