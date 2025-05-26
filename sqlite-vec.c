@@ -5537,17 +5537,12 @@ int diskAnnInsert(vec0_vtab *p, u64 nRowid, void *pVector, int nVectorSize) {
   rc = sqlite3_step(pStmt);
   if (rc != SQLITE_DONE) {
     sqlite3_finalize(pStmt);
-    rc = SQLITE_ERROR;
     goto cleanup;
   }
   sqlite3_finalize(pStmt);
 
-  return SQLITE_OK;
-
 cleanup:
-  if (zSql != NULL) {
-    sqlite3_free(zSql);
-  }
+  sqlite3_free(zSql);
   return rc;
 }
 
@@ -9439,7 +9434,10 @@ int vec0Update_Insert(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
   if (numReadVectors > 0) {
     rc = diskAnnInsert(p, rowid, vectorDatas[0],
                        p->vector_columns[0].dimensions);
-    if (rc != SQLITE_OK) {
+    if (rc != SQLITE_DONE) {
+      vtab_set_error(pVTab, "Failed to insert vector into DiskANN index: %s",
+                     sqlite3_errmsg(p->db));
+      rc = SQLITE_ERROR;
       goto cleanup;
     }
   }
