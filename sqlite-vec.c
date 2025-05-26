@@ -4834,11 +4834,7 @@ void vectorSerializeToBlob(const Vector *pVector, unsigned char *pBlob,
     vectorF32SerializeToBlob(pVector, pBlob, nBlobSize);
     break;
   case SQLITE_VEC_ELEMENT_TYPE_INT8:
-    // REMARK(truc0): not implemented
-    break;
   case SQLITE_VEC_ELEMENT_TYPE_BIT:
-    // REMARK(truc0): not implemented
-    break;
   default:
     assert(0);
   }
@@ -5581,10 +5577,6 @@ static void diskAnnPruneEdges(const DiskAnnIndex *pIndex, BlobSpot *pNodeBlob,
       i++;
       continue;
     }
-    // if (pIndex->nFormatVersion == VECTOR_FORMAT_V1) {
-    // nodeToEdge =
-    //     diskAnnVectorDistance(pIndex, pPlaceholder->pEdge, &edgeVector);
-    // }
 
     hintToEdge = diskAnnVectorDistance(pIndex, &hintEdgeVector, &edgeVector);
     if (nodeToEdge > pIndex->pruningAlpha * hintToEdge) {
@@ -5820,10 +5812,19 @@ int diskAnnInsert(vec0_vtab *p, DiskAnnIndex *pIndex, Vector *pVector,
     return rc;
   }
 
+  // init Vectors
+  vInsert.data = sqlite3_malloc(
+      vector_byte_size(pIndex->nNodeVectorType, pIndex->nVectorDims));
+  vCandidate.data = sqlite3_malloc(
+      vector_byte_size(pIndex->nNodeVectorType, pIndex->nVectorDims));
+  if (vInsert.data == NULL || vCandidate.data == NULL) {
+    rc = SQLITE_NOMEM;
+    goto out;
+  }
+
   // note: we must select random row before we will insert new row in the shadow
   // table
   rc = diskAnnSelectRandomShadowRow(pIndex, &nStartRowid);
-  // nStartRowid = rowid;
   if (rc == SQLITE_DONE) {
     first = 1;
   } else if (rc != SQLITE_OK) {
@@ -5871,7 +5872,6 @@ int diskAnnInsert(vec0_vtab *p, DiskAnnIndex *pIndex, Vector *pVector,
     float nodeToNew;
 
     nodeBinVector(pIndex, pVisited->pBlobSpot, &nodeVector);
-    // loadVectorPair(&vCandidate, &nodeVector);
     vCandidate = nodeVector;
 
     iReplace = diskAnnReplaceEdgeIdx(pIndex, pBlobSpot, pVisited->nRowid,
@@ -5974,8 +5974,6 @@ int diskAnnSearch(vec0_vtab *pVtab, DiskAnnIndex *pIndex, const Vector *pVector,
         "vector index(search): failed to select start node for search");
     return rc;
   }
-
-  // printf("nStartRowid: %ld\n", nStartRowid);
 
   rc = diskAnnSearchCtxInit(&ctx, pVector, pIndex->searchL, k,
                             DISKANN_BLOB_READONLY);
