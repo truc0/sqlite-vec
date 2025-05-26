@@ -5018,16 +5018,15 @@ int nodeEdgesMetadataOffset(const DiskAnnIndex *pIndex) {
 
 void nodeBinInit(const DiskAnnIndex *pIndex, BlobSpot *pBlobSpot, u64 nRowid,
                  Vector *pVector) {
-  assert(nodeMetadataSize(pIndex->nFormatVersion) + pIndex->nNodeVectorSize <=
+  assert(nodeMetadataSize() + pIndex->nNodeVectorSize <=
          pBlobSpot->nBufferSize);
 
   memset(pBlobSpot->pBuffer, 0, pBlobSpot->nBufferSize);
   writeLE64(pBlobSpot->pBuffer, nRowid);
   // neighbours count already zero after memset - no need to set it explicitly
 
-  vectorSerializeToBlob(
-      pVector, pBlobSpot->pBuffer + nodeMetadataSize(pIndex->nFormatVersion),
-      pIndex->nNodeVectorSize);
+  vectorSerializeToBlob(pVector, pBlobSpot->pBuffer + nodeMetadataSize(),
+                        pIndex->nNodeVectorSize);
 }
 
 void nodeBinVector(const DiskAnnIndex *pIndex, const BlobSpot *pBlobSpot,
@@ -5085,15 +5084,13 @@ void nodeBinReplaceEdge(const DiskAnnIndex *pIndex, BlobSpot *pBlobSpot,
     nEdges++;
   }
 
-  edgeVectorOffset = nodeMetadataSize(pIndex->nFormatVersion) +
-                     pIndex->nNodeVectorSize +
+  edgeVectorOffset = nodeMetadataSize() + pIndex->nNodeVectorSize +
                      iReplace * pIndex->nEdgeVectorSize;
-  edgeMetaOffset = nodeEdgesMetadataOffset(pIndex) +
-                   iReplace * edgeMetadataSize(pIndex->nFormatVersion);
+  edgeMetaOffset =
+      nodeEdgesMetadataOffset(pIndex) + iReplace * edgeMetadataSize();
 
   assert(edgeVectorOffset + pIndex->nEdgeVectorSize <= pBlobSpot->nBufferSize);
-  assert(edgeMetaOffset + edgeMetadataSize(pIndex->nFormatVersion) <=
-         pBlobSpot->nBufferSize);
+  assert(edgeMetaOffset + edgeMetadataSize() <= pBlobSpot->nBufferSize);
 
   vectorSerializeToBlob(pVector, pBlobSpot->pBuffer + edgeVectorOffset,
                         pIndex->nEdgeVectorSize);
@@ -5112,30 +5109,25 @@ void nodeBinDeleteEdge(const DiskAnnIndex *pIndex, BlobSpot *pBlobSpot,
 
   assert(0 <= iDelete && iDelete < nEdges);
 
-  edgeVectorOffset = nodeMetadataSize(pIndex->nFormatVersion) +
-                     pIndex->nNodeVectorSize +
+  edgeVectorOffset = nodeMetadataSize() + pIndex->nNodeVectorSize +
                      iDelete * pIndex->nEdgeVectorSize;
-  lastVectorOffset = nodeMetadataSize(pIndex->nFormatVersion) +
-                     pIndex->nNodeVectorSize +
+  lastVectorOffset = nodeMetadataSize() + pIndex->nNodeVectorSize +
                      (nEdges - 1) * pIndex->nEdgeVectorSize;
-  edgeMetaOffset = nodeEdgesMetadataOffset(pIndex) +
-                   iDelete * edgeMetadataSize(pIndex->nFormatVersion);
-  lastMetaOffset = nodeEdgesMetadataOffset(pIndex) +
-                   (nEdges - 1) * edgeMetadataSize(pIndex->nFormatVersion);
+  edgeMetaOffset =
+      nodeEdgesMetadataOffset(pIndex) + iDelete * edgeMetadataSize();
+  lastMetaOffset =
+      nodeEdgesMetadataOffset(pIndex) + (nEdges - 1) * edgeMetadataSize();
 
   assert(edgeVectorOffset + pIndex->nEdgeVectorSize <= pBlobSpot->nBufferSize);
   assert(lastVectorOffset + pIndex->nEdgeVectorSize <= pBlobSpot->nBufferSize);
-  assert(edgeMetaOffset + edgeMetadataSize(pIndex->nFormatVersion) <=
-         pBlobSpot->nBufferSize);
-  assert(lastMetaOffset + edgeMetadataSize(pIndex->nFormatVersion) <=
-         pBlobSpot->nBufferSize);
+  assert(edgeMetaOffset + edgeMetadataSize() <= pBlobSpot->nBufferSize);
+  assert(lastMetaOffset + edgeMetadataSize() <= pBlobSpot->nBufferSize);
 
   if (edgeVectorOffset < lastVectorOffset) {
     memmove(pBlobSpot->pBuffer + edgeVectorOffset,
             pBlobSpot->pBuffer + lastVectorOffset, pIndex->nEdgeVectorSize);
     memmove(pBlobSpot->pBuffer + edgeMetaOffset,
-            pBlobSpot->pBuffer + lastMetaOffset,
-            edgeMetadataSize(pIndex->nFormatVersion));
+            pBlobSpot->pBuffer + lastMetaOffset, edgeMetadataSize());
   }
 
   writeLE16(pBlobSpot->pBuffer + sizeof(u64), nEdges - 1);
